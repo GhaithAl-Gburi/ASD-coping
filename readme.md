@@ -1,5 +1,7 @@
 # README — Coping Strategies as Mediators of Depression and Anxiety Among Parents of Children with Autism Spectrum Disorder (Bayesian&nbsp;SEM in R)
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18093183.svg)](https://doi.org/10.5281/zenodo.18093183)
+
 **Repository author:** Ghaith Al‑Gburi  
 
 **Study context:** This repository accompanies an analysis exploring how coping strategies mediate the relationship between socio‑demographic factors and mental health outcomes (depression and anxiety) in Iraqi parents caring for children with autism spectrum disorder (ASD). 
@@ -111,7 +113,7 @@ The rendered HTML report (`results.html`) includes tables of diagnostic statisti
 If you use or adapt this code in your own work, please cite it as follows (replace the year with the date accessed):
 
 ```
-Al‑Gburi, Ghaith. (2025). ASD‑coping: Bayesian SEM analysis of coping strategies in parents of children with autism. GitHub repository. https://github.com/GhaithAl-Gburi/ASD-coping
+Ghaith Al-Gburi. (2025). GhaithAl-Gburi/ASD-coping: v1.0.0 (pre-publication) (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.18093183
 ```
 
 ---
