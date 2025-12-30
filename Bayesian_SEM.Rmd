@@ -1,0 +1,751 @@
+
+# Settings
+```{r}
+# Clear environment 
+rm(list=ls())
+
+# Print the current R version
+R.version.string
+
+# Increase the size of global objects that can be exported into 2GB
+options(future.globals.maxSize = 2 * 1024^3)
+```
+
+# Load necessary libraries
+```{r}
+# Load libraries for SEM
+library(lavaan)
+library(blavaan)
+library(rstan)
+
+# Load libraries for data manipulation
+library(dplyr)
+library(tibble)
+
+# Load ggplot2 for visualization
+library(ggplot2)
+
+# Load the data file
+data <- read.csv("input.csv")
+```
+
+# Data preprocessing
+## Standardize numeric variables
+```{r}
+# Standardize continuous variables
+cont_vars <- c("age","ses","c_age","time_since","delay",
+               "sd","ac","de","es","is","bd","ve","pr","pl","hu","acc","re","sb",
+               "phq9","gad7")
+
+data[cont_vars] <- scale(data[cont_vars])
+```
+
+## Check the relations between background variables
+```{r}
+# Specify numeric background variables
+num_vars <- c("age",
+               "ses",
+               "no_child",
+               "no_asd_child",
+               "c_age",
+               "time_since",
+               "delay"
+               )
+
+# Specify ordinal background variables
+ord_vars <- c("birth_rank")
+
+# Check the correlation across numeric and ordinal variables
+vars_spearman <- c(num_vars, ord_vars)
+cor_spearman <- cor(data[, vars_spearman],
+                    method = "spearman",
+                    use = "pairwise.complete.obs"
+                    )
+round(cor_spearman, 3)
+
+```
+
+## Check the relations of nominal variables
+```{r}
+# Specify nominal background variables
+nom_vars <- c("father",
+              "marital_stat",
+              "residence",
+              "consanguinity", 
+              "living_sit",
+              "parent_cond",
+              "c_gender",
+              "comorbidity"
+)
+
+# Loop over nominal variables to check relations
+results <- do.call(rbind, lapply(nom_vars, function(nom) {
+
+  res_list <- list()
+
+  # Nominal vs numeric variables
+  for (v in num_vars) {
+  
+    # Perform Kruskal-Wallis test
+    test <- kruskal.test(data[[v]] ~ data[[nom]])
+    
+    # Calculate effect size (η²)
+    H <- unname(test$statistic)
+    k <- length(unique(data[[nom]]))
+    n <- nrow(data)
+
+    eta_sq <- (H - k + 1) / (n - k)
+    eta_sq <- max(0, eta_sq)  
+    
+    # Return a qualitative label for the effect size
+    effect_label <- as.character(cut(eta_sq,
+                                     breaks = c(-Inf, 0.01, 0.06, 0.14, Inf),
+                                     labels = c("Negligible", "Small", "Moderate", "Large"),
+                                     right  = FALSE
+                                     )
+                                 )
+
+    # Append results
+    res_list[[length(res_list) + 1]] <- data.frame(nominal_var  = nom,
+                                                   other_var    = v,
+                                                   test         = "Kruskal-Wallis",
+                                                   statistic    = H,
+                                                   p_value      = test$p.value,
+                                                   effect_size  = eta_sq,
+                                                   effect_label = effect_label,
+                                                   stringsAsFactors = FALSE
+                                                   )
+  }
+
+  # Nominal vs ordinal variables
+  for (v in ord_vars) {
+    
+    # Create a contingency table
+    tab <- table(data[[nom]], data[[v]])
+    tab <- tab[rowSums(tab) > 0, colSums(tab) > 0, drop = FALSE]
+    
+    # Perform Chi-square test
+    test <- suppressWarnings(chisq.test(tab))
+    
+    # Calculate Cramer's V
+    n <- sum(tab)
+    chi_sq <- unname(test$statistic)
+    V <- sqrt((chi_sq) / (n * min(nrow(tab) - 1, ncol(tab) - 1)))
+    
+    # Return a qualitative label for the effect size
+    effect_label <- as.character(cut(V,
+                                     breaks = c(-Inf, 0.10, 0.20, 0.40, 0.60, 0.80, Inf),
+                                     labels = c("Negligible", "Weak", "Moderate", "Relatively strong", "Strong", "Very strong"),
+                                     right  = FALSE
+                                     )
+                                 )
+    
+    # Append results
+    res_list[[length(res_list) + 1]] <- data.frame(nominal_var = nom,
+                                                   other_var   = v,
+                                                   test        = "Chi-square",
+                                                   statistic   = chi_sq,
+                                                   p_value     = test$p.value,
+                                                   effect_size = V,
+                                                   effect_label = effect_label,
+                                                   stringsAsFactors = FALSE
+                                                   )
+  }
+
+  # Nominal vs nominal variables
+  for (v in setdiff(nom_vars, nom)) {
+    
+    # Create a contingency table
+    tab <- table(data[[nom]], data[[v]])
+    tab <- tab[rowSums(tab) > 0, colSums(tab) > 0, drop = FALSE]
+    
+    # Perform Chi-square test
+    test <- suppressWarnings(chisq.test(tab))
+    
+    # Calculate Cramer's V
+    n <- sum(tab)
+    chi_sq <- unname(test$statistic)
+    V <- sqrt(chi_sq / (n * min(nrow(tab) - 1, ncol(tab) - 1)))
+    
+    # Return a qualitative label for the effect size
+    effect_label <- as.character(cut(V,
+                                     breaks = c(-Inf, 0.10, 0.20, 0.40, 0.60, 0.80, Inf),
+                                     labels = c("Negligible", "Weak", "Moderate", "Relatively strong", "Strong", "Very strong"),
+                                     right  = FALSE
+                                     )
+                                 )
+    
+    # Append results
+    res_list[[length(res_list) + 1]] <- data.frame(nominal_var = nom,
+                                                   other_var   = v,
+                                                   test        = "Chi-square",
+                                                   statistic   = chi_sq,
+                                                   p_value     = test$p.value,
+                                                   effect_size = V,
+                                                   effect_label = effect_label,
+                                                   stringsAsFactors = FALSE
+                                                   )
+  }
+
+  do.call(rbind, res_list)
+}))
+
+# Calculated multiple-testing adjusted p-values
+results$p_adj_bh <- p.adjust(results$p_value, method = "BH")
+
+# Re-order columns
+results <- results[, c("nominal_var","other_var","test","statistic","p_value","p_adj_bh","effect_size","effect_label")]
+
+# Print results
+results
+```
+
+## Check the structure of the COPE-brief items
+```{r}
+# Specify the Brief-COPE model structure
+cfa_model <- '
+  # Problem-Focused Coping
+  problem =~ ac + is + pl + pr
+
+  # Emotion-Focused Coping
+  emotion =~ ve + es + hu + acc + sb + re
+
+  # Avoidant Coping
+  avoid =~ sd + de + bd
+  
+  # Covariance
+  problem ~~ emotion + avoid
+  emotion ~~ avoid
+'
+
+fit_cfa <- cfa(cfa_model,
+               data = data,
+               estimator = "MLR"
+               )
+
+summary(fit_cfa, fit.measures = TRUE, standardized = TRUE)
+```
+
+# Define functions
+## Build and fit Bayesian SEM models
+```{r}
+# Define a function to build and fit Bayesian SEM models
+fit_bsem <- function(model,
+                     obs,
+                     beta_sd,
+                     burnin  = 3000,
+                     sample  = 10000,
+                     n.chains = 4,
+                     target  = "stan",
+                     theta_prior  = "cauchy(0, 1)[0, ]"){
+  
+  # Set a random seed for reproducibility
+  set.seed(999)
+  
+  # Create the beta prior string
+  beta_prior <- sprintf("normal(0, %.3f)", beta_sd)
+  
+  # Fit the model
+  fit <- bsem(model,
+              data = obs,
+              burnin = burnin,
+              sample = sample,
+              n.chains = n.chains,
+              dp = dpriors(beta  = beta_prior,
+                           theta = theta_prior
+                           ),
+              target = target
+              )
+  
+  # Return the fitted model
+  return(fit)
+  
+}
+```
+
+## Diagnostic
+```{r}
+# Define a function to report model diagnostics
+diagnostics <- function(fit_bayes) {
+  
+  # Extract Stan objects
+  sf <- fit_bayes@external$mcmcout
+  sp <- get_sampler_params(sf, inc_warmup = FALSE)
+  
+  # Infer the no. of chains and iterations dynamically
+  n_chains <- length(sp)
+  n_iter   <- nrow(sp[[1]])
+  total_iter <- n_chains * n_iter
+  
+  # Divergent transitions
+  divergences <- sapply(sp, function(x) sum(x[, "divergent__"]))
+  total_div   <- sum(divergences)
+  
+  # Treedepth hits
+  max_td <- 10
+  treedepth_hits <- sapply(sp, function(x) sum(x[, "treedepth__"] >= max_td))
+  total_td <- sum(treedepth_hits)
+  td_rate  <- total_td / total_iter * 100
+  
+  # BFMI
+  bfmi <- sapply(sp, function(x) {
+    e <- x[, "energy__"]
+    mean(diff(e)^2) / var(e)
+  })
+  
+  min_bfmi <- min(bfmi)
+  
+  # R-hat
+  rhats <- blavInspect(fit_bayes, "psrf")
+  max_rhat <- max(rhats, na.rm = TRUE)
+  
+  # Effective sample size
+  neff <- blavInspect(fit_bayes, "neff")
+  min_ess <- min(neff, na.rm = TRUE)
+  
+  # Cutoffs
+  cut_div      <- 0
+  cut_td_rate  <- 0.1   
+  cut_bfmi     <- 0.3
+  cut_rhat     <- 1.01
+  cut_ess      <- 400
+  
+  # Build diagnostic table
+  diagnostics_df <- tibble(Diagnostic = c("Divergences", "Treedepth Hits", "Min BFMI", "Max R-hat", "Min ESS"),
+                           Value      = c(total_div, td_rate, min_bfmi, max_rhat, min_ess),
+                           Cutoff     = c(paste0("= ", cut_div),
+                                          paste0("< ", cut_td_rate, "%"),
+                                          paste0("> ", cut_bfmi),
+                                          paste0("< ", cut_rhat),
+                                          paste0("> ", cut_ess)
+                                          ),
+                           Convergence = c(
+                             ifelse(total_div == cut_div, "No Issue", "Issue"),
+                             ifelse(td_rate   < cut_td_rate, "No Issue", "Issue"),
+                             ifelse(min_bfmi  > cut_bfmi, "No Issue", "Issue"),
+                             ifelse(max_rhat  < cut_rhat, "No Issue", "Issue"),
+                             ifelse(min_ess   > cut_ess, "No Issue", "Issue")
+                             )
+                           ) %>%
+    mutate(Value = case_when(Diagnostic == "Divergences"     ~ as.character(Value),
+                             Diagnostic == "Treedepth Hits"  ~ sprintf("%.3f%%", Value),
+                             Diagnostic == "Min BFMI"        ~ sprintf("%.3f",  Value),
+                             Diagnostic == "Max R-hat"       ~ sprintf("%.5f", Value),
+                             Diagnostic == "Min ESS"         ~ sprintf("%.0f",  Value),
+                             TRUE ~ as.character(Value)
+                             )
+           )
+  
+  # Print and return diagnostic table
+  print(diagnostics_df)
+  return(diagnostics_df)
+}
+
+```
+
+## Extract paths
+```{r}
+# Define a function to extract Bayesian SEM paths
+extract_paths <- function(fit_bayes, ci_probs = c(0.025, 0.975)) {
+  
+  # Extract Stan objects
+  sf  <- fit_bayes@external$mcmcout
+  map <- fit_bayes@external$origpt
+  
+  # Create a data frame to store parameter mappings
+  map_df <- data.frame(lhs     = map$lhs,
+                       op      = map$op,
+                       rhs     = map$rhs,
+                       pxname  = map$pxnames,
+                       stringsAsFactors = FALSE
+                       )
+  
+  # Keep regression paths only
+  pe_reg <- subset(map_df, op == "~")
+  
+  # Posterior summaries
+  stan_sum <- rstan::summary(sf, probs = ci_probs)$summary
+  
+  stan_df <- data.frame(pxname  = rownames(stan_sum),
+                        mean    = stan_sum[, "mean"],
+                        lower   = stan_sum[, "2.5%"],
+                        upper   = stan_sum[, "97.5%"],
+                        n_eff   = stan_sum[, "n_eff"],
+                        Rhat    = stan_sum[, "Rhat"],
+                        row.names = NULL,
+                        stringsAsFactors = FALSE
+                        )
+  
+  # Merge mapping and summaries
+  paths_df <- merge(pe_reg, stan_df, by = "pxname", all.x = TRUE)
+  
+  # Define a function to calculate the Probability of Direction (PD)
+  pd_of <- function(param_name) {
+    tryCatch({
+      draws <- rstan::extract(sf, pars = param_name, permuted = FALSE)
+      
+      if (is.null(draws) || length(draws) == 0) {
+        m <- rstan::as.matrix(sf, pars = param_name)
+        if (is.null(m) || ncol(m) == 0) return(NA_real_)
+        s <- m[, 1]
+      } else {
+        s <- as.vector(draws[, , 1])
+      }
+      
+      max(mean(s > 0), mean(s < 0))
+    }, error = function(e) NA_real_)
+  }
+  
+  # Calculate the probability of direction for all paths
+  paths_df$pd <- vapply(paths_df$pxname,
+                        pd_of,
+                        numeric(1)
+                        )
+  
+  # Final formatted data frame
+  paths <- paths_df %>%
+    select(pxname,
+           lhs,
+           rhs,
+           mean,
+           pd,
+           lower,
+           upper,
+           n_eff,
+           Rhat
+           ) %>%
+    mutate(mean  = round(mean, 4),
+           pd    = round(pd, 4),
+           lower = round(lower, 4),
+           upper = round(upper, 4),
+           n_eff = round(n_eff, 2),
+           Rhat  = round(Rhat, 4)
+           ) %>%
+    mutate(row_id = row_number(), .before = 1)
+  
+  return(paths)
+}
+
+```
+
+## Filter paths
+```{r}
+# Define a function that filter paths
+filter_paths <- function(paths_df,
+                         pd_threshold = 0.95,
+                         coping_vars = c("sd","ac","de","es","is","bd","ve","pr","pl","hu","acc","re","sb"),
+                         background_vars = c("age","father","ses","residence","consanguinity","living_sit",
+                                             "no_child","parent_cond","time_since","delay","c_gender","comorbidity"),
+                         outcome_vars = c("phq9","gad7")) {
+
+  # Keep paths with probability of direction >=0.95 and no 0 in 95% credible interval (stable paths)
+  base_df <- paths_df %>%
+    dplyr::filter(!is.na(pd), pd >= pd_threshold) %>%
+    dplyr::filter(!is.na(lower), !is.na(upper), (lower > 0 | upper < 0))
+
+  # Keep stable paths connecting background to outcomes
+  df_bg_outcome <- base_df %>%
+    dplyr::filter(lhs %in% outcome_vars, rhs %in% background_vars)
+
+  # Keep stable paths connecting coping strategies to outcomes
+  df_coping_outcome <- base_df %>%
+    dplyr::filter(lhs %in% outcome_vars, rhs %in% coping_vars)
+
+  # Store coping strategies connected to outcomes via stable paths
+  retained_copings <- unique(df_coping_outcome$rhs)
+  if (length(retained_copings) == 0) {
+    stop("No coping strategies meet the Coping -> Outcome criteria under the given thresholds.")
+  }
+
+  # Keep stable paths connecting background to selected coping strategies
+  df_bg_coping <- base_df %>%
+    dplyr::filter(lhs %in% retained_copings, rhs %in% background_vars)
+
+  # Bind data frames and format
+  filtered_paths_df <- dplyr::bind_rows(df_bg_outcome, df_coping_outcome, df_bg_coping) %>%
+    dplyr::distinct(lhs, rhs, .keep_all = TRUE) %>%
+    dplyr::mutate(from   = rhs,
+                  to     = lhs,
+                  effect = ifelse(mean > 0, "positive", "negative")
+    ) %>%
+    dplyr::select(pxname,
+                  from, 
+                  to, 
+                  mean, 
+                  pd, 
+                  lower, 
+                  upper, 
+                  n_eff, 
+                  Rhat, 
+                  effect
+                  ) %>%
+    dplyr::arrange(dplyr::desc(to),
+                   dplyr::desc(abs(mean))
+                   )
+  
+  attr(filtered_paths_df, "retained_copings") <- retained_copings
+  
+  # Print and return filtered paths
+  print(filtered_paths_df) 
+  return(filtered_paths_df)
+  
+}
+
+```
+
+## Get posterior draws
+```{r}
+# Define a function to acquire posterior draws for retained paths
+get_posterior <- function(fit,
+                          retained_df,
+                          model_name = NA_character_,
+                          beta_sd    = NA_real_) {
+
+  # Return an empty tibble if there are no retained paths
+  if (is.null(retained_df) || nrow(retained_df) == 0) {
+    return(dplyr::tibble())
+  }
+
+  # Convert MCMC output to matrix (rows = draws, cols = parameters)
+  mat <- as.matrix(fit@external$mcmcout)
+
+  # Subset draws to keep only retained paths
+  px <- retained_df$pxname
+  submat <- mat[, px, drop = FALSE]
+
+  n_iter <- nrow(submat)
+  n_par  <- ncol(submat)
+
+  # Build long-format posterior draws table
+  dplyr::tibble(model_name = model_name,
+                beta_sd    = beta_sd,
+                model      = paste0("beta_sd_", beta_sd),
+                .iter      = rep(seq_len(n_iter), times = n_par),
+                pxname     = rep(px, each = n_iter),
+                draw       = as.vector(submat),
+                from       = rep(retained_df$from,  each = n_iter),
+                to         = rep(retained_df$to,    each = n_iter),
+                mean       = rep(retained_df$mean,  each = n_iter),
+                lower      = rep(retained_df$lower, each = n_iter),
+                upper      = rep(retained_df$upper, each = n_iter)
+                )
+}
+```
+
+## Apply the BSEM pipeline
+```{r}
+# Define a function to apply the Bayesian SEM pipeline
+apply_pipeline <- function(model, data, beta_vec){
+  
+  # Create a list to store results
+  results <- vector("list", length(beta_vec))
+  names(results) <- paste0("beta_sd_", beta_vec)
+
+  # Internal accumulators for retained paths and posterior draws
+  kept_all <- dplyr::tibble()
+  post_all <- dplyr::tibble()
+
+  # Fit models, perform diagnostics, extract retained paths, and get posteriors draws
+  for (i in seq_along(beta_vec)) {
+
+    beta <- beta_vec[i]
+    nm   <- paste0("beta_sd_", beta)
+
+    message("Performing BSEM with Beta prior SD = ", beta)
+
+    fit   <- fit_bsem(model = model, obs = data, beta_sd = beta)
+    diag  <- diagnostics(fit)
+    paths <- extract_paths(fit)
+
+    retained <- tryCatch(
+      filter_paths(paths_df = paths),
+      error = function(e) {
+        message("No retained paths for beta_sd = ", beta, " (", e$message, ")")
+        NULL
+      }
+    )
+    
+    # Append results
+    results[[i]] <- list(beta_sd        = beta,
+                         fit            = fit,
+                         diagnostics    = diag,
+                         paths_all      = paths,
+                         paths_retained = retained
+                         )
+
+    if (!is.null(retained) && nrow(retained) > 0) {
+      
+      # Store all retained paths
+      kept_all <- dplyr::bind_rows(kept_all,
+                                   retained |>
+                                     dplyr::transmute(model_name = nm,
+                                                      beta_sd    = beta,
+                                                      model      = nm,
+                                                      from,
+                                                      to, 
+                                                      pxname,
+                                                      mean, 
+                                                      lower, 
+                                                      upper
+                                                      )
+      )
+      
+      # Store all posterior draws
+      post_all <- dplyr::bind_rows(post_all,
+                                   get_posterior(fit         = fit,
+                                                 retained_df = retained,
+                                                 model_name  = nm,
+                                                 beta_sd     = beta
+                                                 )
+      )
+    }
+  }
+
+  # Create a list to store the results of sensitivity analysis
+  sensitivity <- list(common_paths    = NULL,
+                      kw_table        = NULL,
+                      large_paths     = NULL,
+                      large_plot_data = NULL,
+                      note            = NULL
+                      )
+  
+  # if no paths are retained in any model, stop sensitivity analysis
+  if (nrow(post_all) == 0) {
+    sensitivity$note <- "No posterior draws available (no retained paths)."
+    results$sensitivity <- sensitivity
+    return(results)
+  }
+  
+  
+  # Create a unique identifier for each path (from -> to)
+  post_all %>%
+    dplyr::mutate(key = paste(from, to, sep = "|")) -> post_all
+  
+  # Split the path keys by model
+  keys_by_model <- split(post_all$key, post_all$model_name)
+  
+  # Compute the intersection of path keys across all models
+  common_keys <- Reduce(intersect, keys_by_model)
+  
+  # If no paths are common to all models, stop sensitivity analysis
+  if (length(common_keys) == 0) {
+    sensitivity$note <- "Intersection empty: no path retained in all models."
+    results$sensitivity <- sensitivity
+    return(results)
+  }
+  
+  # Keep only posterior draws for common paths
+  post_int <- post_all %>%
+    dplyr::filter(key %in% common_keys)
+  
+  # Store the list of common paths
+  sensitivity$common_paths <- post_int %>%
+    dplyr::distinct(from, to)
+  
+  # Compare between the draws of different models
+  kw_table <- post_int %>%
+    dplyr::group_by(from, to) %>%
+    dplyr::summarise(
+      k = dplyr::n_distinct(model),
+      n = dplyr::n(),
+      kw = list(stats::kruskal.test(draw ~ model)),
+      H = as.numeric(kw[[1]]$statistic),
+      df = as.numeric(kw[[1]]$parameter),
+      p_value = kw[[1]]$p.value,
+      eta_sq = (H - k + 1) / (n - k),
+      effect_label = as.character(cut(
+        eta_sq,
+        breaks = c(-Inf, 0.01, 0.06, 0.14, Inf),
+        labels = c("Negligible", "Small", "Moderate", "Large"),
+        right  = FALSE
+      )),
+      .groups = "drop"
+    ) %>%
+    dplyr::select(-kw) %>%                 # Keep only scalar output
+    dplyr::arrange(dplyr::desc(eta_sq))    # Rank paths by effect size
+  
+  # Print and store results in the sensitivity analysis list
+  print(kw_table)
+  sensitivity$kw_table <- kw_table
+
+  # Retained common paths with large differences across beta SD
+  large_paths <- kw_table %>%
+    dplyr::filter(effect_label %in% c("Large", "Moderate"))
+  
+  sensitivity$large_paths <- large_paths
+  
+  if (nrow(large_paths) > 0) {
+    
+    # Create keys for paths with large differences
+    large_keys <- paste(large_paths$from, large_paths$to, sep = "|")
+  
+    # Retrieve the mean parameter and SD for parameters of paths with large differences
+    large_summary <- post_int %>%
+      dplyr::filter(key %in% large_keys) %>%
+      dplyr::group_by(from, to, beta_sd) %>%
+      dplyr::summarise(mean = mean(draw),
+                       sd   = sd(draw),
+                       .groups = "drop"
+                       )
+    
+    # Store the summary results
+    sensitivity$large_summary <- large_summary
+  
+    # Plot the mean and SD for parameters of paths with large differences
+    sensitivity$large_plot <- ggplot(
+      large_summary,
+      aes(x = beta_sd, y = mean, group = interaction(from, to))
+    ) +
+      geom_line() +
+      geom_point() +
+      geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd),
+                    width = 0.0
+                    ) +
+      facet_wrap(~ paste(from, "→", to), scales = "free_y") +
+      labs(x = "Beta prior SD",
+           y = "Posterior mean (± 1 SD)"
+           ) +
+      theme_bw()
+  
+  } else {
+    sensitivity$large_summary <- NULL
+    sensitivity$large_plot    <- NULL
+  }
+  
+  # Print the plot
+  print(sensitivity$large_plot)
+    
+  # Append sensitivity analysis results
+  results$sensitivity <- sensitivity
+  return(results)
+}
+```
+
+# Analyze data
+```{r}
+# Specify the model structure
+model <- '
+    sd + ac + de + es + is + bd + ve + pr + pl + hu + acc + re + sb ~
+      age + father + ses + residence + consanguinity + living_sit +
+      no_child + parent_cond + time_since + delay + c_gender + comorbidity
+
+    phq9 + gad7 ~ sd + ac + de + es + is + bd + ve + pr + pl + hu + acc + re + sb
+
+    phq9 + gad7 ~
+      age + father + ses + residence + consanguinity + living_sit +
+      no_child + parent_cond + time_since + delay + c_gender + comorbidity
+
+    phq9 ~~ gad7
+  '
+
+# Define a beta prior SD vector
+beta_vec = c(0.2, 0.30, 0.40, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+
+# Apply the Bayesian SEM pipeline across different beta SD
+res <- apply_pipeline(model = model, data = data, beta_vec = beta_vec)
+
+```
+
+
+
+
