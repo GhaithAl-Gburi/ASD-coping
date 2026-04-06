@@ -10,9 +10,9 @@
 
 ## Quick view
 
-Click below to view the complete analysis report and plots (rendered HTML):
+Click below to view the complete analysis report and plots (rendered PDF):
 
-[Open the full analysis report (HTML)](https://rawcdn.githack.com/GhaithAl-Gburi/ASD-coping/main/results.html)
+[Open the full analysis report (PDF)](https://rawcdn.githack.com/GhaithAl-Gburi/ASD-coping/main/analysis_report.pdf)
 
 ---
 
@@ -27,7 +27,7 @@ This repository contains `Bayesian_SEM.Rmd` — an R Markdown script that perf
 ## Files in this repo
 
 - **`Bayesian_SEM.Rmd`** — Main R Markdown analysis script (SEM and sensitivity analysis).  
-- **`results.html`** — Rendered report showing diagnostics, path estimates and plots.  
+- **`analysis_report.pdf`** — Rendered report showing diagnostics, path estimates and plots.  
 - **`data collection tool/`** — Folder containing the Arabic and English questionnaires and a scored version.
 - **`input.csv`** — the CSV file containing the data related to the study referenced above (added following publication).
 - **`LICENSE`** — GNU Affero General Public License v3.0.  
